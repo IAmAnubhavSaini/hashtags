@@ -1,0 +1,1604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hashtag Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        h1 {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            margin: 0;
+            color: #333;
+            z-index: 10;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        #graph-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        #search-container {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            z-index: 10;
+            display: flex;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            width:300px;
+        }
+        #search-input {
+            padding: 8px;
+            width: 100%;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px 0 0 4px;
+        }
+        #search-button {
+            padding: 8px 16px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 0 4px 4px 0;
+        }
+        #search-button:hover {
+            background-color: #45a049;
+        }
+        #tags-panel {
+            position: absolute;
+            top: 100px;
+            right: 15px;
+            z-index: 10;
+            width: 300px;
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+            transition: height 0.3s;
+        }
+        #tags-header {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #tags-toggle {
+            transition: transform 0.3s;
+        }
+        #tag-bubbles {
+            padding: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .tag-bubble {
+            padding: 6px 12px;
+            background-color: #f1f1f1;
+            border-radius: 16px;
+            display: inline-flex;
+            align-items: center;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .tag-bubble:hover {
+            background-color: #e0e0e0;
+        }
+        .tag-count {
+            margin-left: 5px;
+            font-size: 0.8em;
+            background-color: #4CAF50;
+            color: white;
+            border-radius: 50%;
+            padding: 2px 6px;
+        }
+        .node {
+            cursor: pointer;
+        }
+        .node circle {
+            stroke-width: 2px;
+        }
+        .tag-node circle {
+            fill: #6baed6;
+            stroke: #3182bd;
+        }
+        .file-node circle {
+            fill: #fd8d3c;
+            stroke: #e6550d;
+        }
+        .link {
+            fill: none;
+            stroke: #999;
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+        }
+        .node text {
+            font-size: 12px;
+            fill: #333;
+        }
+        #loading-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 20px;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: none;
+            z-index: 100;
+        }
+        #info-panel {
+            position: absolute;
+            bottom: 15px;
+            left: 15px;
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            max-width: 300px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 10;
+        }
+        .tooltip {
+            position: absolute;
+            padding: 8px;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 4px;
+            pointer-events: none;
+            font-size: 12px;
+            max-width: 250px;
+            z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>Hashtag Visualization</h1>
+        <div id="search-container">
+            <input type="text" id="search-input" placeholder="Search for a tag...">
+            <button id="search-button">Go</button>
+        </div>
+        <div id="tags-panel">
+            <div id="tags-header">
+                <span>Tags</span>
+                <span id="tags-toggle">▼</span>
+            </div>
+            <div id="tag-bubbles"></div>
+        </div>
+        <div id="graph-container">
+            <div id="loading-indicator">Loading...</div>
+            <div id="info-panel" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let frequencyData = {};
+        let tagsFilesData = {};
+        let filesTagsData = [];
+        let simulation;
+        let svg;
+        let width;
+        let height;
+        let currentTag = null;
+        const MAX_DEPTH = 5; // Increased maximum depth
+        let currentDepth = 3; // Default depth
+        let strokeWidth = 1.5; // Default stroke width
+        let tagNodeColor = '#6baed6'; // Default tag node color
+        let tagNodeStrokeColor = '#3182bd'; // Default tag node stroke color
+        let fileNodeColor = '#fd8d3c'; // Default file node color
+        let fileNodeStrokeColor = '#e6550d'; // Default file node stroke color
+        // Cache for storing graph data by tag
+        const graphDataCache = new Map();
+        // Set of ignored tags
+        const ignoredTags = new Set();
+        // Set to track dependencies between tags (which tags are related to which)
+        const tagDependencies = new Map();
+
+        // Load saved state from localStorage
+        function loadSavedState() {
+            try {
+                // Load ignored tags
+                const savedIgnoredTags = localStorage.getItem('ignoredTags');
+                if (savedIgnoredTags) {
+                    const tagArray = JSON.parse(savedIgnoredTags);
+                    tagArray.forEach(tag => ignoredTags.add(tag));
+                    console.log(`Loaded ${ignoredTags.size} ignored tags from localStorage`);
+                }
+
+                // Load current tag
+                const savedCurrentTag = localStorage.getItem('currentTag');
+                if (savedCurrentTag) {
+                    currentTag = savedCurrentTag;
+                    console.log(`Loaded current tag: ${currentTag} from localStorage`);
+                }
+
+                // Load visualization settings
+                const savedSettings = localStorage.getItem('vizSettings');
+                if (savedSettings) {
+                    const settings = JSON.parse(savedSettings);
+                    if (settings.currentDepth) currentDepth = settings.currentDepth;
+                    if (settings.strokeWidth) strokeWidth = settings.strokeWidth;
+                    if (settings.tagNodeColor) tagNodeColor = settings.tagNodeColor;
+                    if (settings.tagNodeStrokeColor) tagNodeStrokeColor = settings.tagNodeStrokeColor;
+                    if (settings.fileNodeColor) fileNodeColor = settings.fileNodeColor;
+                    if (settings.fileNodeStrokeColor) fileNodeStrokeColor = settings.fileNodeStrokeColor;
+                    console.log('Loaded visualization settings from localStorage');
+                }
+            } catch (error) {
+                console.error('Error loading saved state:', error);
+                // Clear potentially corrupted data
+                localStorage.removeItem('ignoredTags');
+                localStorage.removeItem('currentTag');
+                localStorage.removeItem('vizSettings');
+            }
+        }
+
+        // Save ignored tags to localStorage
+        function saveIgnoredTags() {
+            try {
+                localStorage.setItem('ignoredTags', JSON.stringify(Array.from(ignoredTags)));
+                console.log(`Saved ${ignoredTags.size} ignored tags to localStorage`);
+            } catch (error) {
+                console.error('Error saving ignored tags:', error);
+            }
+        }
+
+        // Save current tag to localStorage
+        function saveCurrentTag() {
+            try {
+                if (currentTag) {
+                    localStorage.setItem('currentTag', currentTag);
+                    console.log(`Saved current tag: ${currentTag} to localStorage`);
+                }
+            } catch (error) {
+                console.error('Error saving current tag:', error);
+            }
+        }
+
+        // Save visualization settings to localStorage
+        function saveSettings() {
+            try {
+                const settings = {
+                    currentDepth,
+                    strokeWidth,
+                    tagNodeColor,
+                    tagNodeStrokeColor,
+                    fileNodeColor,
+                    fileNodeStrokeColor
+                };
+                localStorage.setItem('vizSettings', JSON.stringify(settings));
+                console.log('Saved visualization settings to localStorage');
+            } catch (error) {
+                console.error('Error saving visualization settings:', error);
+            }
+        }
+
+        // Toggle tags panel
+        document.getElementById('tags-header').addEventListener('click', function() {
+            const panel = document.getElementById('tags-panel');
+            const bubbles = document.getElementById('tag-bubbles');
+            const toggle = document.getElementById('tags-toggle');
+
+            if (bubbles.style.display === 'none') {
+                bubbles.style.display = 'flex';
+                toggle.textContent = '▼';
+                toggle.style.transform = 'rotate(0deg)';
+            } else {
+                bubbles.style.display = 'none';
+                toggle.textContent = '▼';
+                toggle.style.transform = 'rotate(-90deg)';
+            }
+        });
+
+        // Add ignored tags panel to the page
+        function createIgnoredTagsPanel() {
+            // Create panel container
+            const ignoredPanel = document.createElement('div');
+            ignoredPanel.id = 'ignored-tags-panel';
+            ignoredPanel.style.position = 'absolute';
+            ignoredPanel.style.left = '15px';
+            ignoredPanel.style.top = '100px';
+            ignoredPanel.style.zIndex = '10';
+            ignoredPanel.style.width = '300px';
+            ignoredPanel.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+            ignoredPanel.style.borderRadius = '5px';
+            ignoredPanel.style.boxShadow = '0 2px 5px rgba(0, 0, 0, 0.2)';
+            ignoredPanel.style.overflow = 'hidden';
+            ignoredPanel.style.display = 'flex';
+            ignoredPanel.style.flexDirection = 'column';
+
+            // Create header
+            const header = document.createElement('div');
+            header.style.padding = '10px 15px';
+            header.style.backgroundColor = '#f44336';
+            header.style.color = 'white';
+            header.style.cursor = 'pointer';
+            header.style.display = 'flex';
+            header.style.justifyContent = 'space-between';
+            header.style.alignItems = 'center';
+
+            const headerTitle = document.createElement('span');
+            headerTitle.textContent = 'Ignored Tags';
+
+            const headerToggle = document.createElement('span');
+            headerToggle.id = 'ignored-tags-toggle';
+            headerToggle.textContent = '▼';
+            headerToggle.style.transition = 'transform 0.3s';
+
+            header.appendChild(headerTitle);
+            header.appendChild(headerToggle);
+
+            // Create content
+            const content = document.createElement('div');
+            content.id = 'ignored-tags-content';
+            content.style.padding = '15px';
+            content.style.display = 'none';
+            content.style.display = 'flex';
+            content.style.flexDirection = 'column';
+            content.style.gap = '10px';
+
+            // Create input container
+            const inputContainer = document.createElement('div');
+            inputContainer.style.display = 'flex';
+            inputContainer.style.gap = '5px';
+
+            const input = document.createElement('input');
+            input.id = 'ignored-tag-input';
+            input.type = 'text';
+            input.placeholder = 'Add tag to ignore...';
+            input.style.flex = '1';
+            input.style.padding = '8px 12px';
+            input.style.border = '1px solid #ccc';
+            input.style.borderRadius = '4px';
+            input.style.fontSize = '14px';
+
+            const addButton = document.createElement('button');
+            addButton.textContent = 'Add';
+            addButton.style.padding = '8px 16px';
+            addButton.style.backgroundColor = '#f44336';
+            addButton.style.color = 'white';
+            addButton.style.border = 'none';
+            addButton.style.borderRadius = '4px';
+            addButton.style.cursor = 'pointer';
+
+            inputContainer.appendChild(input);
+            inputContainer.appendChild(addButton);
+
+            // Create list title
+            const listTitle = document.createElement('div');
+            listTitle.textContent = 'Currently Ignored Tags';
+            listTitle.style.fontWeight = 'bold';
+            listTitle.style.marginTop = '5px';
+
+            // Create list
+            const list = document.createElement('div');
+            list.id = 'ignored-tags-list';
+            list.style.maxHeight = '200px';
+            list.style.overflowY = 'auto';
+            list.style.display = 'flex';
+            list.style.flexDirection = 'column';
+            list.style.gap = '5px';
+            list.style.border = '1px solid #eee';
+            list.style.borderRadius = '4px';
+            list.style.padding = '5px';
+            list.style.backgroundColor = '#f8f8f8';
+
+            content.appendChild(inputContainer);
+            content.appendChild(listTitle);
+            content.appendChild(list);
+
+            // Add to panel
+            ignoredPanel.appendChild(header);
+            ignoredPanel.appendChild(content);
+
+            // Add to container
+            document.getElementById('container').appendChild(ignoredPanel);
+
+            // Toggle event
+            header.addEventListener('click', function() {
+                const content = document.getElementById('ignored-tags-content');
+                const toggle = document.getElementById('ignored-tags-toggle');
+
+                if (content.style.display === 'none') {
+                    content.style.display = 'flex';
+                    toggle.style.transform = 'rotate(0deg)';
+                } else {
+                    content.style.display = 'none';
+                    toggle.style.transform = 'rotate(-90deg)';
+                }
+            });
+
+            // Add button event
+            addButton.addEventListener('click', addIgnoredTag);
+            input.addEventListener('keyup', function(event) {
+                if (event.key === 'Enter') {
+                    addIgnoredTag();
+                }
+            });
+
+            // Update the ignored tags list display with any previously loaded tags
+            updateIgnoredTagsList();
+        }
+
+        // Add a tag to the ignored list
+        function addIgnoredTag() {
+            const input = document.getElementById('ignored-tag-input');
+            const tag = input.value.trim();
+
+            if (tag && frequencyData[tag] !== undefined) {
+                // Add to ignored set
+                ignoredTags.add(tag);
+
+                // Clear input
+                input.value = '';
+
+                // Update ignored tags list
+                updateIgnoredTagsList();
+
+                // Save to localStorage
+                saveIgnoredTags();
+
+                // Find and invalidate all cached tags that depend on this tag
+                invalidateDependentTags(tag);
+
+                // Update tag bubbles to filter out newly ignored tag
+                createTagBubbles();
+
+                // Reload current graph if needed
+                if (currentTag) {
+                    loadGraphForTag(currentTag);
+                }
+            } else if (tag) {
+                alert('Tag not found in the data!');
+            }
+        }
+
+        // Find and invalidate all cached tags that depend on this tag
+        function invalidateDependentTags(tag) {
+            const dependentTags = new Set();
+
+            // Add direct dependents
+            if (tagDependencies.has(tag)) {
+                tagDependencies.get(tag).forEach(dependent => dependentTags.add(dependent));
+            }
+
+            // Also find tags that include this tag in their graph
+            graphDataCache.forEach((data, cachedTag) => {
+                const containsTag = data.nodes.some(node =>
+                    node.type === 'tag' &&
+                    node.name === tag
+                );
+
+                if (containsTag) {
+                    dependentTags.add(cachedTag);
+                }
+            });
+
+            // Delete affected cache entries
+            let invalidatedCount = 0;
+            dependentTags.forEach(dependentTag => {
+                if (graphDataCache.has(dependentTag)) {
+                    graphDataCache.delete(dependentTag);
+                    invalidatedCount++;
+                }
+            });
+
+            console.log(`Invalidated ${invalidatedCount} cache entries that depend on tag: ${tag}`);
+        }
+
+        // Remove a tag from the ignored list
+        function removeIgnoredTag(tag) {
+            // Remove from ignored set
+            ignoredTags.delete(tag);
+
+            // Update ignored tags list
+            updateIgnoredTagsList();
+
+            // Save to localStorage
+            saveIgnoredTags();
+
+            // Clear cache for affected tags - when unignoring, potentially all cached graphs could change
+            graphDataCache.clear();
+            console.log('Cache cleared due to unignoring a tag');
+
+            // Update tag bubbles to include newly unignored tag
+            createTagBubbles();
+
+            // Reload current graph if needed
+            if (currentTag) {
+                loadGraphForTag(currentTag);
+            }
+        }
+
+        // Update the ignored tags list display
+        function updateIgnoredTagsList() {
+            const list = document.getElementById('ignored-tags-list');
+            if (!list) return; // Safety check in case panel isn't created yet
+
+            list.innerHTML = '';
+
+            if (ignoredTags.size === 0) {
+                const emptyMsg = document.createElement('p');
+                emptyMsg.textContent = 'No ignored tags yet.';
+                emptyMsg.style.fontStyle = 'italic';
+                emptyMsg.style.color = '#666';
+                emptyMsg.style.padding = '10px';
+                emptyMsg.style.margin = '0';
+                emptyMsg.style.textAlign = 'center';
+                list.appendChild(emptyMsg);
+                return;
+            }
+
+            // Add each ignored tag to the list
+            ignoredTags.forEach(tag => {
+                const tagItem = document.createElement('div');
+                tagItem.style.display = 'flex';
+                tagItem.style.justifyContent = 'space-between';
+                tagItem.style.alignItems = 'center';
+                tagItem.style.padding = '8px 10px';
+                tagItem.style.backgroundColor = 'white';
+                tagItem.style.border = '1px solid #ddd';
+                tagItem.style.borderRadius = '4px';
+
+                const tagName = document.createElement('span');
+                tagName.textContent = tag;
+                tagName.style.fontWeight = 'bold';
+
+                const removeBtn = document.createElement('button');
+                removeBtn.textContent = '×';
+                removeBtn.style.backgroundColor = '#f44336';
+                removeBtn.style.color = 'white';
+                removeBtn.style.border = 'none';
+                removeBtn.style.borderRadius = '50%';
+                removeBtn.style.width = '24px';
+                removeBtn.style.height = '24px';
+                removeBtn.style.cursor = 'pointer';
+                removeBtn.style.display = 'flex';
+                removeBtn.style.justifyContent = 'center';
+                removeBtn.style.alignItems = 'center';
+                removeBtn.style.fontSize = '18px';
+                removeBtn.style.padding = '0';
+                removeBtn.style.lineHeight = '1';
+
+                removeBtn.addEventListener('click', function() {
+                    removeIgnoredTag(tag);
+                });
+
+                tagItem.appendChild(tagName);
+                tagItem.appendChild(removeBtn);
+                list.appendChild(tagItem);
+            });
+        }
+
+        // Clear cache for affected tags
+        function clearCacheForIgnoredTags() {
+            // Instead of clearing the entire cache, identify affected tags
+            const affectedTags = new Set();
+
+            // All tags in the cache could potentially be affected
+            graphDataCache.forEach((data, tag) => {
+                // Check if the graph for this tag includes any now-ignored tags
+                const containsIgnoredTag = data.nodes.some(node =>
+                    node.type === 'tag' &&
+                    node.id !== 'tag:' + tag && // Not the main tag itself
+                    ignoredTags.has(node.name)
+                );
+
+                if (containsIgnoredTag) {
+                    affectedTags.add(tag);
+                }
+            });
+
+            // Delete affected entries
+            affectedTags.forEach(tag => {
+                graphDataCache.delete(tag);
+                console.log(`Cache entry deleted for tag: ${tag} due to ignored tags change`);
+            });
+
+            // If the current tag is affected, we'll need to rebuild it
+            if (currentTag && affectedTags.has(currentTag)) {
+                console.log(`Current tag ${currentTag} was affected by ignored tags change, rebuilding...`);
+            }
+        }
+
+        // Load data from JSON files
+        Promise.all([
+            d3.json('../dist/frequency.json'),
+            d3.json('../dist/tags-files.json'),
+            d3.json('../dist/files.tags.json')
+        ]).then(([frequency, tagsFiles, filesTags]) => {
+            frequencyData = frequency;
+            tagsFilesData = tagsFiles;
+            filesTagsData = filesTags;
+
+            // Load saved state from localStorage first
+            loadSavedState();
+
+            // Create ignored tags panel
+            createIgnoredTagsPanel();
+
+            // Create settings panel
+            createSettingsPanel();
+
+            // Create tag bubbles
+            createTagBubbles();
+
+            // Load initial graph with saved or most frequent tag
+            if (currentTag && frequencyData[currentTag] !== undefined) {
+                // Use saved tag if it exists in our data
+                loadGraphForTag(currentTag);
+            } else {
+                // Find most frequent tag
+                const mostFrequentTag = Object.entries(frequencyData)
+                    .sort((a, b) => b[1] - a[1])[0][0];
+
+                // Load initial graph with most frequent tag
+                loadGraphForTag(mostFrequentTag);
+            }
+        }).catch(error => {
+            console.error('Error loading data:', error);
+            document.getElementById('loading-indicator').textContent = 'Error loading data. Please refresh the page.';
+        });
+
+        // Create tag bubbles based on frequency data
+        function createTagBubbles() {
+            const bubbleContainer = document.getElementById('tag-bubbles');
+            bubbleContainer.innerHTML = ''; // Clear existing bubbles
+
+            // Convert frequency data to array and sort by count (descending)
+            const tags = Object.entries(frequencyData)
+                .sort((a, b) => b[1] - a[1]);
+
+            // Create bubble for each tag (excluding ignored tags)
+            tags.forEach(([tag, count]) => {
+                // Skip ignored tags
+                if (ignoredTags.has(tag)) return;
+
+                const bubble = document.createElement('div');
+                bubble.className = 'tag-bubble';
+                bubble.innerHTML = `${tag} <span class="tag-count">${count}</span>`;
+
+                // Add click event to update graph
+                bubble.addEventListener('click', () => {
+                    document.getElementById('search-input').value = tag;
+                    loadGraphForTag(tag);
+                });
+
+                bubbleContainer.appendChild(bubble);
+            });
+        }
+
+        // Initialize graph
+        function initializeGraph() {
+            // Clear any existing graph
+            d3.select('#graph-container svg').remove();
+
+            // Get container dimensions
+            const container = document.getElementById('graph-container');
+            width = container.clientWidth;
+            height = container.clientHeight;
+
+            // Create SVG
+            svg = d3.select('#graph-container')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            // Create tooltip
+            if (!document.querySelector('.tooltip')) {
+                d3.select('body').append('div')
+                    .attr('class', 'tooltip')
+                    .style('opacity', 0);
+            }
+        }
+
+        // Load graph for specific tag
+        function loadGraphForTag(tag) {
+            // Show loading indicator
+            document.getElementById('loading-indicator').style.display = 'block';
+
+            // Update current tag
+            currentTag = tag;
+
+            // Save current tag to localStorage
+            saveCurrentTag();
+
+            // Update search input to match current tag
+            document.getElementById('search-input').value = tag;
+
+            // Initialize or reset graph
+            initializeGraph();
+
+            // Check if we have cached data for this tag
+            if (graphDataCache.has(tag)) {
+                console.log(`Using cached data for tag: ${tag}`);
+                // Update last accessed time for LRU cache management
+                const cachedData = graphDataCache.get(tag);
+                cachedData.lastAccessed = Date.now();
+
+                // Use cached data
+                createForceGraph(cachedData);
+
+                // Update info panel
+                updateInfoPanel(tag);
+
+                // Hide loading indicator
+                document.getElementById('loading-indicator').style.display = 'none';
+                return;
+            }
+
+            // If no cached data, build graph data with current depth
+            const graphData = buildGraphData(tag, currentDepth);
+
+            // Add last accessed timestamp for LRU cache management
+            graphData.lastAccessed = Date.now();
+
+            // Cache the graph data for future use
+            graphDataCache.set(tag, graphData);
+
+            // Create force-directed graph
+            createForceGraph(graphData);
+
+            // Update info panel
+            updateInfoPanel(tag);
+
+            // Hide loading indicator
+            document.getElementById('loading-indicator').style.display = 'none';
+        }
+
+        // Build graph data for a tag with specified depth
+        function buildGraphData(tag, depth) {
+            const nodes = [];
+            const links = [];
+            const nodeMap = new Map();
+
+            // Clear previous dependencies for this tag
+            tagDependencies.set(tag, new Set());
+
+            // Add root tag node
+            nodes.push({
+                id: 'tag:' + tag,
+                name: tag,
+                type: 'tag',
+                count: frequencyData[tag] || 0,
+                depth: 0
+            });
+            nodeMap.set('tag:' + tag, 0);
+
+            // Use helper function to build graph recursively
+            buildGraphRecursive(tag, 0, depth, nodes, links, nodeMap);
+
+            return { nodes, links };
+        }
+
+        // Modified recursive function to build graph respecting ignored tags
+        function buildGraphRecursive(tag, currentDepth, maxDepth, nodes, links, nodeMap) {
+            if (currentDepth >= maxDepth) return;
+
+            // Get files for tag
+            const tagFiles = tagsFilesData[tag] || [];
+
+            // Process each file
+            tagFiles.forEach(file => {
+                const fileId = 'file:' + file;
+
+                // Add file node if not exists
+                if (!nodeMap.has(fileId)) {
+                    nodes.push({
+                        id: fileId,
+                        name: getFileName(file),
+                        fullPath: file,
+                        type: 'file',
+                        depth: currentDepth + 1
+                    });
+                    nodeMap.set(fileId, nodes.length - 1);
+                }
+
+                // Add link from tag to file
+                links.push({
+                    source: 'tag:' + tag,
+                    target: fileId,
+                    value: 1
+                });
+
+                // If depth allows, process tags in this file
+                if (currentDepth + 1 < maxDepth) {
+                    // Find tags in this file
+                    const fileEntry = filesTagsData.find(entry => entry.file === file);
+                    const fileTags = fileEntry ? fileEntry.tags : [];
+
+                    // Process each tag in the file
+                    fileTags.forEach(fileTag => {
+                        // Skip if tag is the same as current or is in ignored list
+                        if (fileTag !== tag && !ignoredTags.has(fileTag)) {
+                            const fileTagId = 'tag:' + fileTag;
+
+                            // Record the dependency between the root tag and this related tag
+                            if (tagDependencies.has(tag)) {
+                                tagDependencies.get(tag).add(fileTag);
+                            }
+
+                            // Also record reverse dependency if it doesn't exist
+                            if (!tagDependencies.has(fileTag)) {
+                                tagDependencies.set(fileTag, new Set([tag]));
+                            } else {
+                                tagDependencies.get(fileTag).add(tag);
+                            }
+
+                            // Add tag node if not exists
+                            if (!nodeMap.has(fileTagId)) {
+                                nodes.push({
+                                    id: fileTagId,
+                                    name: fileTag,
+                                    type: 'tag',
+                                    count: frequencyData[fileTag] || 0,
+                                    depth: currentDepth + 2
+                                });
+                                nodeMap.set(fileTagId, nodes.length - 1);
+
+                                // Continue building graph for this tag
+                                buildGraphRecursive(fileTag, currentDepth + 2, maxDepth, nodes, links, nodeMap);
+                            }
+
+                            // Add link from file to tag
+                            links.push({
+                                source: fileId,
+                                target: fileTagId,
+                                value: 1
+                            });
+                        }
+                    });
+                }
+            });
+        }
+
+        // Create force-directed graph
+        function createForceGraph(graphData) {
+            // Create simulation
+            simulation = d3.forceSimulation(graphData.nodes)
+                .force('link', d3.forceLink(graphData.links).id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('x', d3.forceX(width / 2).strength(0.1))
+                .force('y', d3.forceY(height / 2).strength(0.1));
+
+            // Create links
+            const link = svg.append('g')
+                .attr('class', 'links')
+                .selectAll('line')
+                .data(graphData.links)
+                .enter().append('line')
+                .attr('class', 'link')
+                .style('stroke-width', strokeWidth + 'px');
+
+            // Create nodes
+            const node = svg.append('g')
+                .attr('class', 'nodes')
+                .selectAll('.node')
+                .data(graphData.nodes)
+                .enter().append('g')
+                .attr('class', d => `node ${d.type}-node`)
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+
+            // Add circles to nodes with custom colors
+            node.append('circle')
+                .attr('r', d => {
+                    return d.type === 'tag' ?
+                        Math.max(5, Math.min(15, 5 + d.count / 10)) :
+                        8;
+                })
+                .style('fill', d => d.type === 'tag' ? tagNodeColor : fileNodeColor)
+                .style('stroke', d => d.type === 'tag' ? tagNodeStrokeColor : fileNodeStrokeColor);
+
+            // Add text to nodes
+            node.append('text')
+                .attr('dy', -12)
+                .text(d => d.name)
+                .attr('text-anchor', 'middle');
+
+            // Add tooltip behavior
+            node.on('mouseover', function(event, d) {
+                const tooltip = d3.select('.tooltip');
+                tooltip.transition()
+                    .duration(200)
+                    .style('opacity', .9);
+
+                let tooltipContent = '';
+                if (d.type === 'tag') {
+                    tooltipContent = `Tag: ${d.name}<br>Count: ${d.count}`;
+                } else {
+                    tooltipContent = `File: ${d.name}<br>${d.fullPath}`;
+                }
+
+                tooltip.html(tooltipContent)
+                    .style('left', (event.pageX + 10) + 'px')
+                    .style('top', (event.pageY - 28) + 'px');
+            })
+            .on('mouseout', function() {
+                d3.select('.tooltip').transition()
+                    .duration(500)
+                    .style('opacity', 0);
+            })
+            .on('click', function(event, d) {
+                if (d.type === 'tag') {
+                    document.getElementById('search-input').value = d.name;
+                    loadGraphForTag(d.name);
+                } else {
+                    // Show file details in info panel
+                    showFileInfo(d);
+                }
+            });
+
+            // Update positions on tick
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+
+            // Zoom functionality
+            const zoom = d3.zoom()
+                .scaleExtent([0.1, 10])
+                .on('zoom', (event) => {
+                    svg.selectAll('g').attr('transform', event.transform);
+                });
+
+            svg.call(zoom);
+        }
+
+        // Drag functions for nodes
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        // Helper function to extract file name from path
+        function getFileName(path) {
+            return path.split('/').pop();
+        }
+
+        // Update info panel with tag details
+        function updateInfoPanel(tag) {
+            const infoPanel = document.getElementById('info-panel');
+            infoPanel.style.display = 'block';
+            infoPanel.innerHTML = `<h3>Current Tag: ${tag}</h3>
+                <p>Frequency: ${frequencyData[tag] || 0}</p>
+                <p>Connected to ${tagsFilesData[tag]?.length || 0} files</p>`;
+        }
+
+        // Show file info in panel
+        function showFileInfo(fileNode) {
+            const infoPanel = document.getElementById('info-panel');
+            infoPanel.style.display = 'block';
+
+            // Find tags for this file
+            const fileEntry = filesTagsData.find(entry => entry.file === fileNode.fullPath);
+            const fileTags = fileEntry ? fileEntry.tags : [];
+
+            infoPanel.innerHTML = `<h3>File: ${fileNode.name}</h3>
+                <p>${fileNode.fullPath}</p>
+                <p>Tags: ${fileTags.join(', ') || 'None'}</p>`;
+        }
+
+        // Add event listeners
+        document.getElementById('search-button').addEventListener('click', function() {
+            const tag = document.getElementById('search-input').value.trim();
+            if (tag) {
+                loadGraphForTag(tag);
+            }
+        });
+
+        document.getElementById('search-input').addEventListener('keyup', function(event) {
+            if (event.key === 'Enter') {
+                const tag = document.getElementById('search-input').value.trim();
+                if (tag) {
+                    loadGraphForTag(tag);
+                }
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (currentTag) {
+                // On resize, we recreate the graph but reuse the cached data
+                initializeGraph();
+                if (graphDataCache.has(currentTag)) {
+                    createForceGraph(graphDataCache.get(currentTag));
+                } else {
+                    const graphData = buildGraphData(currentTag, currentDepth);
+                    graphDataCache.set(currentTag, graphData);
+                    createForceGraph(graphData);
+                }
+            }
+        });
+
+        // Clear cache when it gets too large (optional memory management)
+        function clearCacheIfNeeded() {
+            // If cache exceeds 50 entries, remove oldest entries
+            const MAX_CACHE_SIZE = 50;
+            if (graphDataCache.size > MAX_CACHE_SIZE) {
+                console.log(`Cache size (${graphDataCache.size}) exceeds limit (${MAX_CACHE_SIZE}), cleaning up...`);
+
+                // Get all keys (tags) and their last access time
+                const cacheEntries = Array.from(graphDataCache.keys()).map(tag => {
+                    const data = graphDataCache.get(tag);
+                    return {
+                        tag,
+                        // Use lastAccessed if it exists, otherwise use current time to avoid immediate deletion
+                        lastAccessed: data.lastAccessed || Date.now()
+                    };
+                });
+
+                // Sort by last accessed time (oldest first)
+                cacheEntries.sort((a, b) => a.lastAccessed - b.lastAccessed);
+
+                // Remove oldest entries (first 10 entries or 20% of cache, whichever is larger)
+                const entriesToRemove = Math.max(10, Math.floor(graphDataCache.size * 0.2));
+                for (let i = 0; i < entriesToRemove; i++) {
+                    if (i < cacheEntries.length) {
+                        const tag = cacheEntries[i].tag;
+                        // Don't remove the currently viewed tag
+                        if (tag !== currentTag) {
+                            graphDataCache.delete(tag);
+                        }
+                    }
+                }
+
+                console.log(`Cache cleaned. Removed ${entriesToRemove} entries. New size: ${graphDataCache.size}`);
+            }
+        }
+
+        // Call clear cache periodically (every 5 minutes)
+        setInterval(clearCacheIfNeeded, 5 * 60 * 1000);
+
+        // Add a button to manually clear cache
+        const infoPanel = document.getElementById('info-panel');
+        const clearCacheButton = document.createElement('button');
+        clearCacheButton.textContent = 'Clear Cache';
+        clearCacheButton.style.marginTop = '10px';
+        clearCacheButton.style.padding = '5px';
+        clearCacheButton.addEventListener('click', function() {
+            graphDataCache.clear();
+            console.log('Cache cleared manually');
+            // Reload current graph
+            if (currentTag) {
+                loadGraphForTag(currentTag);
+            }
+        });
+        infoPanel.appendChild(clearCacheButton);
+
+        // Create settings panel
+        function createSettingsPanel() {
+            // Create panel container
+            const settingsPanel = document.createElement('div');
+            settingsPanel.id = 'settings-panel';
+            settingsPanel.style.position = 'absolute';
+            settingsPanel.style.right = '15px';
+            settingsPanel.style.bottom = '15px';
+            settingsPanel.style.zIndex = '10';
+            settingsPanel.style.width = '300px';
+            settingsPanel.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+            settingsPanel.style.borderRadius = '5px';
+            settingsPanel.style.boxShadow = '0 2px 5px rgba(0, 0, 0, 0.2)';
+            settingsPanel.style.overflow = 'hidden';
+            settingsPanel.style.display = 'flex';
+            settingsPanel.style.flexDirection = 'column';
+
+            // Create header
+            const header = document.createElement('div');
+            header.style.padding = '10px 15px';
+            header.style.backgroundColor = '#2196F3';
+            header.style.color = 'white';
+            header.style.cursor = 'pointer';
+            header.style.display = 'flex';
+            header.style.justifyContent = 'space-between';
+            header.style.alignItems = 'center';
+
+            const headerTitle = document.createElement('span');
+            headerTitle.textContent = 'Visualization Settings';
+
+            const headerToggle = document.createElement('span');
+            headerToggle.id = 'settings-toggle';
+            headerToggle.textContent = '▼';
+            headerToggle.style.transition = 'transform 0.3s';
+
+            header.appendChild(headerTitle);
+            header.appendChild(headerToggle);
+
+            // Create content
+            const content = document.createElement('div');
+            content.id = 'settings-content';
+            content.style.padding = '15px';
+            content.style.display = 'none';
+            content.style.display = 'flex';
+            content.style.flexDirection = 'column';
+            content.style.gap = '15px';
+
+            // Depth control
+            const depthContainer = document.createElement('div');
+            depthContainer.style.display = 'flex';
+            depthContainer.style.flexDirection = 'column';
+            depthContainer.style.gap = '8px';
+
+            const depthSectionTitle = document.createElement('div');
+            depthSectionTitle.textContent = 'Graph Depth';
+            depthSectionTitle.style.fontSize = '16px';
+            depthSectionTitle.style.fontWeight = 'bold';
+
+            const depthControls = document.createElement('div');
+            depthControls.style.display = 'flex';
+            depthControls.style.alignItems = 'center';
+            depthControls.style.gap = '8px';
+
+            const depthMinus = document.createElement('button');
+            depthMinus.textContent = '-';
+            depthMinus.style.width = '36px';
+            depthMinus.style.height = '36px';
+            depthMinus.style.fontSize = '18px';
+            depthMinus.style.border = 'none';
+            depthMinus.style.backgroundColor = '#f1f1f1';
+            depthMinus.style.cursor = 'pointer';
+            depthMinus.style.borderRadius = '4px';
+
+            const depthValue = document.createElement('span');
+            depthValue.id = 'depth-value';
+            depthValue.textContent = currentDepth;
+            depthValue.style.width = '36px';
+            depthValue.style.height = '36px';
+            depthValue.style.display = 'flex';
+            depthValue.style.justifyContent = 'center';
+            depthValue.style.alignItems = 'center';
+            depthValue.style.backgroundColor = '#f8f8f8';
+            depthValue.style.border = '1px solid #ddd';
+            depthValue.style.borderRadius = '4px';
+
+            const depthPlus = document.createElement('button');
+            depthPlus.textContent = '+';
+            depthPlus.style.width = '36px';
+            depthPlus.style.height = '36px';
+            depthPlus.style.fontSize = '18px';
+            depthPlus.style.border = 'none';
+            depthPlus.style.backgroundColor = '#f1f1f1';
+            depthPlus.style.cursor = 'pointer';
+            depthPlus.style.borderRadius = '4px';
+
+            const depthApply = document.createElement('button');
+            depthApply.textContent = 'Apply';
+            depthApply.style.flex = '1';
+            depthApply.style.height = '36px';
+            depthApply.style.backgroundColor = '#2196F3';
+            depthApply.style.color = 'white';
+            depthApply.style.border = 'none';
+            depthApply.style.borderRadius = '4px';
+            depthApply.style.cursor = 'pointer';
+
+            depthControls.appendChild(depthMinus);
+            depthControls.appendChild(depthValue);
+            depthControls.appendChild(depthPlus);
+            depthControls.appendChild(depthApply);
+
+            depthContainer.appendChild(depthSectionTitle);
+            depthContainer.appendChild(depthControls);
+
+            // Stroke width control
+            const strokeContainer = document.createElement('div');
+            strokeContainer.style.display = 'flex';
+            strokeContainer.style.flexDirection = 'column';
+            strokeContainer.style.gap = '8px';
+
+            const strokeSectionTitle = document.createElement('div');
+            strokeSectionTitle.textContent = 'Stroke Width';
+            strokeSectionTitle.style.fontSize = '16px';
+            strokeSectionTitle.style.fontWeight = 'bold';
+
+            const strokeControls = document.createElement('div');
+            strokeControls.style.display = 'flex';
+            strokeControls.style.alignItems = 'center';
+            strokeControls.style.gap = '8px';
+
+            const strokeMinus = document.createElement('button');
+            strokeMinus.textContent = '-';
+            strokeMinus.style.width = '36px';
+            strokeMinus.style.height = '36px';
+            strokeMinus.style.fontSize = '18px';
+            strokeMinus.style.border = 'none';
+            strokeMinus.style.backgroundColor = '#f1f1f1';
+            strokeMinus.style.cursor = 'pointer';
+            strokeMinus.style.borderRadius = '4px';
+
+            const strokeValue = document.createElement('span');
+            strokeValue.id = 'stroke-value';
+            strokeValue.textContent = strokeWidth;
+            strokeValue.style.width = '36px';
+            strokeValue.style.height = '36px';
+            strokeValue.style.display = 'flex';
+            strokeValue.style.justifyContent = 'center';
+            strokeValue.style.alignItems = 'center';
+            strokeValue.style.backgroundColor = '#f8f8f8';
+            strokeValue.style.border = '1px solid #ddd';
+            strokeValue.style.borderRadius = '4px';
+
+            const strokePlus = document.createElement('button');
+            strokePlus.textContent = '+';
+            strokePlus.style.width = '36px';
+            strokePlus.style.height = '36px';
+            strokePlus.style.fontSize = '18px';
+            strokePlus.style.border = 'none';
+            strokePlus.style.backgroundColor = '#f1f1f1';
+            strokePlus.style.cursor = 'pointer';
+            strokePlus.style.borderRadius = '4px';
+
+            const strokeApply = document.createElement('button');
+            strokeApply.textContent = 'Apply';
+            strokeApply.style.flex = '1';
+            strokeApply.style.height = '36px';
+            strokeApply.style.backgroundColor = '#2196F3';
+            strokeApply.style.color = 'white';
+            strokeApply.style.border = 'none';
+            strokeApply.style.borderRadius = '4px';
+            strokeApply.style.cursor = 'pointer';
+
+            strokeControls.appendChild(strokeMinus);
+            strokeControls.appendChild(strokeValue);
+            strokeControls.appendChild(strokePlus);
+            strokeControls.appendChild(strokeApply);
+
+            strokeContainer.appendChild(strokeSectionTitle);
+            strokeContainer.appendChild(strokeControls);
+
+            // Node colors section
+            const colorsSection = document.createElement('div');
+            colorsSection.style.display = 'flex';
+            colorsSection.style.flexDirection = 'column';
+            colorsSection.style.gap = '15px';
+
+            const colorsTitle = document.createElement('div');
+            colorsTitle.textContent = 'Node Colors';
+            colorsTitle.style.fontSize = '16px';
+            colorsTitle.style.fontWeight = 'bold';
+
+            // File node color picker
+            const fileColorContainer = document.createElement('div');
+            fileColorContainer.style.display = 'flex';
+            fileColorContainer.style.flexDirection = 'column';
+            fileColorContainer.style.gap = '8px';
+
+            const fileColorContainerTitle = document.createElement('div');
+            fileColorContainerTitle.textContent = 'File Node Colors';
+            fileColorContainerTitle.style.fontSize = '14px';
+
+            const fileColorControls = document.createElement('div');
+            fileColorControls.style.display = 'flex';
+            fileColorControls.style.gap = '8px';
+
+            const fileColorLabel = document.createElement('div');
+            fileColorLabel.style.flex = '1';
+            fileColorLabel.style.display = 'flex';
+            fileColorLabel.style.flexDirection = 'column';
+            fileColorLabel.style.gap = '4px';
+
+            const fileColorText = document.createElement('span');
+            fileColorText.textContent = 'Fill';
+
+            const fileColorPicker = document.createElement('input');
+            fileColorPicker.type = 'color';
+            fileColorPicker.id = 'file-color';
+            fileColorPicker.value = fileNodeColor;
+            fileColorPicker.style.width = '100%';
+            fileColorPicker.style.height = '30px';
+            fileColorPicker.style.border = 'none';
+            fileColorPicker.style.padding = '0';
+            fileColorPicker.style.cursor = 'pointer';
+
+            fileColorLabel.appendChild(fileColorText);
+            fileColorLabel.appendChild(fileColorPicker);
+
+            const fileStrokeLabel = document.createElement('div');
+            fileStrokeLabel.style.flex = '1';
+            fileStrokeLabel.style.display = 'flex';
+            fileStrokeLabel.style.flexDirection = 'column';
+            fileStrokeLabel.style.gap = '4px';
+
+            const fileStrokeText = document.createElement('span');
+            fileStrokeText.textContent = 'Stroke';
+
+            const fileStrokePicker = document.createElement('input');
+            fileStrokePicker.type = 'color';
+            fileStrokePicker.id = 'file-stroke-color';
+            fileStrokePicker.value = fileNodeStrokeColor;
+            fileStrokePicker.style.width = '100%';
+            fileStrokePicker.style.height = '30px';
+            fileStrokePicker.style.border = 'none';
+            fileStrokePicker.style.padding = '0';
+            fileStrokePicker.style.cursor = 'pointer';
+
+            fileStrokeLabel.appendChild(fileStrokeText);
+            fileStrokeLabel.appendChild(fileStrokePicker);
+
+            fileColorControls.appendChild(fileColorLabel);
+            fileColorControls.appendChild(fileStrokeLabel);
+
+            fileColorContainer.appendChild(fileColorContainerTitle);
+            fileColorContainer.appendChild(fileColorControls);
+
+            // Tag node color picker
+            const tagColorContainer = document.createElement('div');
+            tagColorContainer.style.display = 'flex';
+            tagColorContainer.style.flexDirection = 'column';
+            tagColorContainer.style.gap = '8px';
+
+            const tagColorContainerTitle = document.createElement('div');
+            tagColorContainerTitle.textContent = 'Tag Node Colors';
+            tagColorContainerTitle.style.fontSize = '14px';
+
+            const tagColorControls = document.createElement('div');
+            tagColorControls.style.display = 'flex';
+            tagColorControls.style.gap = '8px';
+
+            const tagColorLabel = document.createElement('div');
+            tagColorLabel.style.flex = '1';
+            tagColorLabel.style.display = 'flex';
+            tagColorLabel.style.flexDirection = 'column';
+            tagColorLabel.style.gap = '4px';
+
+            const tagColorText = document.createElement('span');
+            tagColorText.textContent = 'Fill';
+
+            const tagColorPicker = document.createElement('input');
+            tagColorPicker.type = 'color';
+            tagColorPicker.id = 'tag-color';
+            tagColorPicker.value = tagNodeColor;
+            tagColorPicker.style.width = '100%';
+            tagColorPicker.style.height = '30px';
+            tagColorPicker.style.border = 'none';
+            tagColorPicker.style.padding = '0';
+            tagColorPicker.style.cursor = 'pointer';
+
+            tagColorLabel.appendChild(tagColorText);
+            tagColorLabel.appendChild(tagColorPicker);
+
+            const tagStrokeLabel = document.createElement('div');
+            tagStrokeLabel.style.flex = '1';
+            tagStrokeLabel.style.display = 'flex';
+            tagStrokeLabel.style.flexDirection = 'column';
+            tagStrokeLabel.style.gap = '4px';
+
+            const tagStrokeText = document.createElement('span');
+            tagStrokeText.textContent = 'Stroke';
+
+            const tagStrokePicker = document.createElement('input');
+            tagStrokePicker.type = 'color';
+            tagStrokePicker.id = 'tag-stroke-color';
+            tagStrokePicker.value = tagNodeStrokeColor;
+            tagStrokePicker.style.width = '100%';
+            tagStrokePicker.style.height = '30px';
+            tagStrokePicker.style.border = 'none';
+            tagStrokePicker.style.padding = '0';
+            tagStrokePicker.style.cursor = 'pointer';
+
+            tagStrokeLabel.appendChild(tagStrokeText);
+            tagStrokeLabel.appendChild(tagStrokePicker);
+
+            tagColorControls.appendChild(tagColorLabel);
+            tagColorControls.appendChild(tagStrokeLabel);
+
+            tagColorContainer.appendChild(tagColorContainerTitle);
+            tagColorContainer.appendChild(tagColorControls);
+
+            // Apply colors button
+            const colorsApply = document.createElement('button');
+            colorsApply.textContent = 'Apply Colors';
+            colorsApply.style.height = '36px';
+            colorsApply.style.backgroundColor = '#2196F3';
+            colorsApply.style.color = 'white';
+            colorsApply.style.border = 'none';
+            colorsApply.style.borderRadius = '4px';
+            colorsApply.style.cursor = 'pointer';
+
+            colorsSection.appendChild(colorsTitle);
+            colorsSection.appendChild(tagColorContainer);
+            colorsSection.appendChild(fileColorContainer);
+            colorsSection.appendChild(colorsApply);
+
+            // Reset button
+            const resetButton = document.createElement('button');
+            resetButton.textContent = 'Reset to Defaults';
+            resetButton.style.height = '40px';
+            resetButton.style.backgroundColor = '#f44336';
+            resetButton.style.color = 'white';
+            resetButton.style.border = 'none';
+            resetButton.style.borderRadius = '4px';
+            resetButton.style.cursor = 'pointer';
+            resetButton.style.fontWeight = 'bold';
+            resetButton.style.marginTop = '10px';
+
+            // Add all elements to content
+            content.appendChild(depthContainer);
+            content.appendChild(strokeContainer);
+            content.appendChild(colorsSection);
+            content.appendChild(resetButton);
+
+            // Add to panel
+            settingsPanel.appendChild(header);
+            settingsPanel.appendChild(content);
+
+            // Add to container
+            document.getElementById('container').appendChild(settingsPanel);
+
+            // Toggle event
+            header.addEventListener('click', function() {
+                const content = document.getElementById('settings-content');
+                const toggle = document.getElementById('settings-toggle');
+
+                if (content.style.display === 'none') {
+                    content.style.display = 'flex';
+                    toggle.style.transform = 'rotate(0deg)';
+                } else {
+                    content.style.display = 'none';
+                    toggle.style.transform = 'rotate(-90deg)';
+                }
+            });
+
+            // Depth control events
+            depthMinus.addEventListener('click', function() {
+                const depthValue = document.getElementById('depth-value');
+                if (currentDepth > 1) {
+                    currentDepth--;
+                    depthValue.textContent = currentDepth;
+                }
+            });
+
+            depthPlus.addEventListener('click', function() {
+                const depthValue = document.getElementById('depth-value');
+                if (currentDepth < MAX_DEPTH) {
+                    currentDepth++;
+                    depthValue.textContent = currentDepth;
+                }
+            });
+
+            depthApply.addEventListener('click', function() {
+                // Clear cache for current tag to force rebuild with new depth
+                if (currentTag) {
+                    // Change in depth affects all tags, so invalidate the entire cache
+                    graphDataCache.clear();
+                    console.log('Cache cleared due to depth change');
+
+                    saveSettings();
+                    loadGraphForTag(currentTag);
+                }
+            });
+
+            // Stroke width control events
+            strokeMinus.addEventListener('click', function() {
+                const strokeValue = document.getElementById('stroke-value');
+                if (strokeWidth > 0.5) {
+                    strokeWidth = Math.round((strokeWidth - 0.5) * 10) / 10;
+                    strokeValue.textContent = strokeWidth;
+                }
+            });
+
+            strokePlus.addEventListener('click', function() {
+                const strokeValue = document.getElementById('stroke-value');
+                if (strokeWidth < 5) {
+                    strokeWidth = Math.round((strokeWidth + 0.5) * 10) / 10;
+                    strokeValue.textContent = strokeWidth;
+                }
+            });
+
+            strokeApply.addEventListener('click', function() {
+                saveSettings();
+                updateGraphStyles();
+            });
+
+            // Color control events
+            colorsApply.addEventListener('click', function() {
+                tagNodeColor = document.getElementById('tag-color').value;
+                tagNodeStrokeColor = document.getElementById('tag-stroke-color').value;
+                fileNodeColor = document.getElementById('file-color').value;
+                fileNodeStrokeColor = document.getElementById('file-stroke-color').value;
+
+                saveSettings();
+                updateGraphStyles();
+            });
+
+            // Reset button event
+            resetButton.addEventListener('click', function() {
+                // Reset to default values
+                currentDepth = 3;
+                strokeWidth = 1.5;
+                tagNodeColor = '#6baed6';
+                tagNodeStrokeColor = '#3182bd';
+                fileNodeColor = '#fd8d3c';
+                fileNodeStrokeColor = '#e6550d';
+
+                // Update UI
+                document.getElementById('depth-value').textContent = currentDepth;
+                document.getElementById('stroke-value').textContent = strokeWidth;
+                document.getElementById('tag-color').value = tagNodeColor;
+                document.getElementById('tag-stroke-color').value = tagNodeStrokeColor;
+                document.getElementById('file-color').value = fileNodeColor;
+                document.getElementById('file-stroke-color').value = fileNodeStrokeColor;
+
+                // Save and update
+                saveSettings();
+
+                // Clear cache for current tag
+                if (currentTag) {
+                    graphDataCache.delete(currentTag);
+                    loadGraphForTag(currentTag);
+                }
+            });
+        }
+
+        // Update graph styles without rebuilding
+        function updateGraphStyles() {
+            // Update link stroke width
+            d3.selectAll('.link')
+                .style('stroke-width', strokeWidth + 'px');
+
+            // Update tag nodes
+            d3.selectAll('.tag-node circle')
+                .style('fill', tagNodeColor)
+                .style('stroke', tagNodeStrokeColor);
+
+            // Update file nodes
+            d3.selectAll('.file-node circle')
+                .style('fill', fileNodeColor)
+                .style('stroke', fileNodeStrokeColor);
+        }
+    </script>
+</body>
+</html>

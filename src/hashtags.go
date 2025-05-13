@@ -88,6 +88,7 @@ func stripCodeAndStrings(src string) string {
 
 func main() {
 	home, _ := os.UserHomeDir()
+	// Change this to your notes directory
 	root := filepath.Join(home, "notes")
 
 	globalFreq := map[string]int{}
