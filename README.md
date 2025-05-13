@@ -17,3 +17,8 @@ I use this to generate graph of my obsidian vaults. This is faster than their im
 9. Custom color themes stored in localStorage
 10. Cached tag graphs for improved performance
 
+## LICENSE
+
+MIT License
+
+Copyright (c) 2025 Anubhav Saini
