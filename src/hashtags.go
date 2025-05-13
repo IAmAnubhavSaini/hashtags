@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,35 +11,19 @@ import (
 )
 
 var hashtagRE = regexp.MustCompile(`#([a-zA-Z][\w\-/]*)`)
-var globalHashtags = make(map[string]int)
-
-type FileData struct {
-	FilePath string   `json:"file"`
-	Tags     []string `json:"tags"`
-}
-
-type TagFiles struct {
-	Tag   string   `json:"tag"`
-	Files []string `json:"files"`
-}
 
 func main() {
 	home, _ := os.UserHomeDir()
 	root := filepath.Join(home, "notes")
 
-	var filesData []FileData
+	globalFreq := map[string]int{}
+	tagToFiles := map[string][]string{}
+	var filesToTags []FileData
 
-	tagToFiles := make(map[string][]string)
-
-	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.ToLower(filepath.Ext(path)) != ".md" {
 			return nil
 		}
-
-		if !strings.HasSuffix(strings.ToLower(path), ".md") {
-			return nil
-		}
-
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil
@@ -49,91 +32,56 @@ func main() {
 		if len(matches) == 0 {
 			return nil
 		}
-		counts := map[string]int{}
+
+		tagSet := map[string]struct{}{}
 		for _, m := range matches {
-			counts[m[1]]++
-
-			globalHashtags[m[1]]++
-		}
-		fmt.Println(path)
-
-		fileData := FileData{
-			FilePath: path,
-			Tags:     []string{},
-		}
-
-		for tag := range counts {
-			fmt.Printf("  %s: %d\n", tag, counts[tag])
-			fileData.Tags = append(fileData.Tags, tag)
-
+			tag := m[1]
+			globalFreq[tag]++
 			tagToFiles[tag] = append(tagToFiles[tag], path)
+			tagSet[tag] = struct{}{}
 		}
 
-		filesData = append(filesData, fileData)
+		tags := make([]string, 0, len(tagSet))
+		for tag := range tagSet {
+			tags = append(tags, tag)
+		}
+		filesToTags = append(filesToTags, FileData{FilePath: path, Tags: tags})
 
 		return nil
 	})
 
-	fmt.Println("\n=== Global Hashtags (Sorted by Frequency) ===")
-	printSortedHashtags(globalHashtags)
+	_ = os.MkdirAll("./dist", 0755)
 
-	outputPath1 := filepath.Join("./dist", "files_to_tags.json")
-	writeHashtagsToJSON(filesData, outputPath1)
-	fmt.Printf("\nFiles to tags data written to: %s\n", outputPath1)
-
-	outputPath2 := filepath.Join("./dist", "tags_to_files.json")
-	writeTagsToFilesJSON(tagToFiles, outputPath2)
-	fmt.Printf("Tags to files data written to: %s\n", outputPath2)
+	writeJSON(sortMapByValue(globalFreq), "./dist/frequency.json")
+	writeJSON(tagToFiles, "./dist/tags-files.json")
+	writeJSON(filesToTags, "./dist/files.tags.json")
 }
 
-func printSortedHashtags(hashtags map[string]int) {
-	type tagFreq struct {
-		tag   string
-		count int
+type FileData struct {
+	FilePath string   `json:"file"`
+	Tags     []string `json:"tags"`
+}
+
+func writeJSON(data any, path string) {
+	b, _ := json.MarshalIndent(data, "", "  ")
+	_ = os.WriteFile(path, b, 0644)
+}
+
+func sortMapByValue(m map[string]int) map[string]int {
+	type kv struct {
+		Key   string
+		Value int
 	}
-
-	pairs := make([]tagFreq, 0, len(hashtags))
-
-	for tag, count := range hashtags {
-		pairs = append(pairs, tagFreq{tag, count})
+	var sorted []kv
+	for k, v := range m {
+		sorted = append(sorted, kv{k, v})
 	}
-
-	sort.Slice(pairs, func(i, j int) bool {
-		return pairs[i].count > pairs[j].count
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Value > sorted[j].Value
 	})
-
-	for _, pair := range pairs {
-		fmt.Printf("  %s: %d\n", pair.tag, pair.count)
+	out := make(map[string]int, len(sorted))
+	for _, kv := range sorted {
+		out[kv.Key] = kv.Value
 	}
-}
-
-func writeHashtagsToJSON(filesData []FileData, outputPath string) error {
-	jsonData, err := json.MarshalIndent(filesData, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(outputPath, jsonData, 0644)
-}
-
-func writeTagsToFilesJSON(tagToFiles map[string][]string, outputPath string) error {
-	var tagsData []TagFiles
-
-	for tag, files := range tagToFiles {
-		tagsData = append(tagsData, TagFiles{
-			Tag:   tag,
-			Files: files,
-		})
-	}
-
-	sort.Slice(tagsData, func(i, j int) bool {
-		return tagsData[i].Tag > tagsData[j].Tag
-	})
-
-	jsonData, err := json.MarshalIndent(tagsData, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(outputPath, jsonData, 0644)
+	return out
 }
