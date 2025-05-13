@@ -10,14 +10,88 @@ import (
 	"strings"
 )
 
-var hashtagRE = regexp.MustCompile(`#([a-zA-Z][\w\-/]*)`)
+var hashtagRE = regexp.MustCompile(`#([a-zA-Z][\w\-/]{1,60})`)
+
+func isValidHashtag(tag string) bool {
+	if matched, _ := regexp.MatchString(`^[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$`, tag); matched {
+		return false
+	}
+	if strings.HasPrefix(tag, "L") && len(tag) > 1 && isNumeric(tag[1:]) {
+		return false
+	}
+	if len(tag) == 1 {
+		return false
+	}
+	return true
+}
+
+func isNumeric(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func stripCodeAndStrings(src string) string {
+	var out strings.Builder
+	inCodeBlock := false
+
+	for _, line := range strings.Split(src, "\n") {
+		trim := strings.TrimSpace(line)
+		if strings.HasPrefix(trim, "```") {
+			inCodeBlock = !inCodeBlock
+			out.WriteByte('\n')
+			continue
+		}
+		if inCodeBlock {
+			out.WriteByte('\n')
+			continue
+		}
+
+		inSingle, inDouble, inBacktick := false, false, false
+		var buf strings.Builder
+
+		for _, ch := range line {
+			switch ch {
+			case '"':
+				if !inSingle && !inBacktick {
+					inDouble = !inDouble
+					buf.WriteRune(' ')
+					continue
+				}
+			case '\'':
+				if !inDouble && !inBacktick {
+					inSingle = !inSingle
+					buf.WriteRune(' ')
+					continue
+				}
+			case '`':
+				if !inSingle && !inDouble {
+					inBacktick = !inBacktick
+					buf.WriteRune(' ')
+					continue
+				}
+			}
+			if inSingle || inDouble || inBacktick {
+				buf.WriteRune(' ')
+			} else {
+				buf.WriteRune(ch)
+			}
+		}
+		out.WriteString(buf.String())
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
 
 func main() {
 	home, _ := os.UserHomeDir()
 	root := filepath.Join(home, "notes")
 
 	globalFreq := map[string]int{}
-	tagToFiles := map[string][]string{}
+	tagToFiles := map[string]map[string]struct{}{}
 	var filesToTags []FileData
 
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -28,32 +102,40 @@ func main() {
 		if err != nil {
 			return nil
 		}
-		matches := hashtagRE.FindAllStringSubmatch(string(data), -1)
-		if len(matches) == 0 {
-			return nil
-		}
+		cleaned := stripCodeAndStrings(string(data))
+		matches := hashtagRE.FindAllStringSubmatch(cleaned, -1)
 
 		tagSet := map[string]struct{}{}
 		for _, m := range matches {
 			tag := m[1]
-			globalFreq[tag]++
-			tagToFiles[tag] = append(tagToFiles[tag], path)
-			tagSet[tag] = struct{}{}
+			if isValidHashtag(tag) {
+				globalFreq[tag]++
+				tagSet[tag] = struct{}{}
+				if _, ok := tagToFiles[tag]; !ok {
+					tagToFiles[tag] = make(map[string]struct{})
+				}
+				tagToFiles[tag][path] = struct{}{}
+			}
+		}
+
+		if len(tagSet) == 0 {
+			return nil
 		}
 
 		tags := make([]string, 0, len(tagSet))
 		for tag := range tagSet {
 			tags = append(tags, tag)
 		}
-		filesToTags = append(filesToTags, FileData{FilePath: path, Tags: tags})
+		sort.Strings(tags)
 
+		filesToTags = append(filesToTags, FileData{FilePath: path, Tags: tags})
 		return nil
 	})
 
 	_ = os.MkdirAll("./dist", 0755)
 
 	writeJSON(sortMapByValue(globalFreq), "./dist/frequency.json")
-	writeJSON(tagToFiles, "./dist/tags-files.json")
+	writeJSON(convertTagToFiles(tagToFiles), "./dist/tags-files.json")
 	writeJSON(filesToTags, "./dist/files.tags.json")
 }
 
@@ -82,6 +164,19 @@ func sortMapByValue(m map[string]int) map[string]int {
 	out := make(map[string]int, len(sorted))
 	for _, kv := range sorted {
 		out[kv.Key] = kv.Value
+	}
+	return out
+}
+
+func convertTagToFiles(m map[string]map[string]struct{}) map[string][]string {
+	out := make(map[string][]string, len(m))
+	for tag, fileSet := range m {
+		files := make([]string, 0, len(fileSet))
+		for f := range fileSet {
+			files = append(files, f)
+		}
+		sort.Strings(files)
+		out[tag] = files
 	}
 	return out
 }
