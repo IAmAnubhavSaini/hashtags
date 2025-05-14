@@ -640,9 +640,9 @@
 
         // Load data from JSON files
         Promise.all([
-            d3.json('./dist/frequency.json'),
-            d3.json('./dist/tags-files.json'),
-            d3.json('./dist/files-tags.json')
+            d3.json('../dist/frequency.json'),
+            d3.json('../dist/tags-files.json'),
+            d3.json('../dist/files-tags.json')
         ]).then(([frequency, tagsFiles, filesTags]) => {
             console.log('Data loaded successfully:', {
                 frequencyKeys: Object.keys(frequency).length,
