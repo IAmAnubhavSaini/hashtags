@@ -1,0 +1,22 @@
+services:
+  builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.builder
+    volumes:
+      - ${FULL_PATH:-./notes}:/notes
+      - ./dist:/app/dist
+    restart: "no"
+    command: -path=/notes
+
+  view:
+    build:
+      context: .
+      dockerfile: Dockerfile.view
+    volumes:
+      - ./dist:/usr/share/nginx/html/dist
+    ports:
+      - "8080:80"
+    restart: "no"
+    depends_on:
+      - builder 

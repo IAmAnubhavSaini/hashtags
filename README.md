@@ -13,8 +13,8 @@ mkdir -p dist && go run src/hashtags.go
 # Run with custom path specified as command line argument
 mkdir -p dist && go run src/hashtags.go -path=/path/to/notes
 
-# Create a .env file with NOTES_PATH=/path/to/notes for persistent configuration
-echo "NOTES_PATH=/path/to/notes" > .env
+# Create a .env file with FULL_PATH=/path/to/notes for persistent configuration
+echo "FULL_PATH=/path/to/notes" > .env
 mkdir -p dist && go run src/hashtags.go
 ```
 
@@ -24,7 +24,7 @@ Create a file named `.env` in the project root with:
 
 ```
 # Path to your notes directory
-NOTES_PATH=/path/to/your/notes
+FULL_PATH=/path/to/your/notes
 ```
 
 ### Visualizing the graph
@@ -34,16 +34,41 @@ NOTES_PATH=/path/to/your/notes
 python -m http.server --bind 127.0.0.1 7979 --directory ./src
 ```
 
-Then visit http://127.0.0.1:7979/viz.html in your browser.
+Then visit http://127.0.0.1:7979/ in your browser.
 
-### Using Docker (Go utility only)
+### Using Docker
+
+#### Processing utility (hashtags:builder)
 
 ```bash
 # Build Docker image
-docker build --tag hashtags:builder .
+docker build --file Dockerfile.builder --tag hashtags:builder .
 
 # Run with volume mounted to access your notes and output files
-docker run --volume /path/to/notes:/notes --volume $(pwd)/dist:/app/dist hashtags:builder -path=/notes
+docker run --rm --volume /path/to/notes:/notes --volume $(pwd)/dist:/app/dist hashtags:builder -path=/notes
+```
+
+#### Visualization (hashtags:view)
+
+```bash
+# Build Docker image
+docker build --file Dockerfile.view --tag hashtags:view .
+
+# Run with the dist directory mounted to visualize the generated data
+docker run --rm --volume $(pwd)/dist:/usr/share/nginx/html/dist --publish 8080:80 hashtags:view
+```
+
+Then visit http://localhost:8080/ in your browser.
+
+#### Complete Docker Compose setup
+
+You can also use Docker Compose to run both services together:
+
+```bash
+# Start both services
+docker compose up
+
+# Access the visualization at http://localhost:8080
 ```
 
 ## Features
@@ -59,7 +84,7 @@ docker run --volume /path/to/notes:/notes --volume $(pwd)/dist:/app/dist hashtag
 9. Custom color themes stored in localStorage
 10. Cached tag graphs for improved performance
 11. Multiple ways to specify notes directory (command line, .env file, default path)
-12. Docker support for the Go processing utility
+12. Docker support for both processing and visualization components
 
 ## LICENSE
 
