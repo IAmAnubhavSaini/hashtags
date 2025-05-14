@@ -227,6 +227,9 @@
         const ignoredTags = new Set();
         // Set to track dependencies between tags (which tags are related to which)
         const tagDependencies = new Map();
+        // Tag history for browser navigation
+        let tagHistory = [];
+        let currentHistoryIndex = -1;
 
         // Load saved state from localStorage
         function loadSavedState() {
@@ -639,8 +642,14 @@
         Promise.all([
             d3.json('./dist/frequency.json'),
             d3.json('./dist/tags-files.json'),
-            d3.json('./dist/files.tags.json')
+            d3.json('./dist/files-tags.json')
         ]).then(([frequency, tagsFiles, filesTags]) => {
+            console.log('Data loaded successfully:', {
+                frequencyKeys: Object.keys(frequency).length,
+                tagsFilesKeys: Object.keys(tagsFiles).length,
+                filesTagsLength: filesTags.length
+            });
+
             frequencyData = frequency;
             tagsFilesData = tagsFiles;
             filesTagsData = filesTags;
@@ -657,22 +666,137 @@
             // Create tag bubbles
             createTagBubbles();
 
-            // Load initial graph with saved or most frequent tag
-            if (currentTag && frequencyData[currentTag] !== undefined) {
-                // Use saved tag if it exists in our data
-                loadGraphForTag(currentTag);
-            } else {
-                // Find most frequent tag
-                const mostFrequentTag = Object.entries(frequencyData)
-                    .sort((a, b) => b[1] - a[1])[0][0];
+            // Check URL for tag parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const tagFromUrl = urlParams.get('tag');
+            console.log('Initial URL params:', {
+                tagFromUrl,
+                currentUrl: window.location.href,
+                search: window.location.search
+            });
 
-                // Load initial graph with most frequent tag
-                loadGraphForTag(mostFrequentTag);
+            // Get a tag from top 10% frequency
+            const getTopFrequencyTag = () => {
+                const sortedTags = Object.entries(frequencyData)
+                    .sort((a, b) => b[1] - a[1]);
+                const top10PercentIndex = Math.floor(sortedTags.length * 0.1);
+                const selectedTag = sortedTags[top10PercentIndex][0];
+                console.log('Selected top frequency tag:', {
+                    selectedTag,
+                    frequency: frequencyData[selectedTag],
+                    totalTags: sortedTags.length,
+                    top10PercentIndex
+                });
+                return selectedTag;
+            };
+
+            // Initialize history with current tag
+            if (tagFromUrl && frequencyData[tagFromUrl] !== undefined) {
+                console.log('Using tag from URL:', tagFromUrl);
+                // Use tag from URL if it exists in our data
+                tagHistory = [tagFromUrl];
+                currentHistoryIndex = 0;
+                loadGraphForTag(tagFromUrl, false);
+            } else if (currentTag && frequencyData[currentTag] !== undefined) {
+                console.log('Using saved tag from localStorage:', currentTag);
+                // Use saved tag if it exists in our data
+                tagHistory = [currentTag];
+                currentHistoryIndex = 0;
+                loadGraphForTag(currentTag, false);
+            } else {
+                // Use a tag from top 10% frequency
+                const topFrequencyTag = getTopFrequencyTag();
+                console.log('Using top frequency tag:', topFrequencyTag);
+
+                // Initialize history with top frequency tag
+                tagHistory = [topFrequencyTag];
+                currentHistoryIndex = 0;
+                loadGraphForTag(topFrequencyTag, false);
             }
+
+            // Update URL on first load if not already set
+            if (!tagFromUrl) {
+                const initialTag = currentTag || tagHistory[0];
+                console.log('Updating initial URL with tag:', initialTag);
+                const url = new URL(window.location);
+                url.searchParams.set('tag', initialTag);
+                window.history.replaceState({ tag: initialTag }, '', url);
+                console.log('URL after update:', window.location.href);
+            }
+
+            // Add popstate event listener for browser back/forward
+            window.addEventListener('popstate', handlePopState);
         }).catch(error => {
             console.error('Error loading data:', error);
             document.getElementById('loading-indicator').textContent = 'Error loading data. Please refresh the page.';
         });
+
+        // Handle browser back/forward navigation
+        function handlePopState(event) {
+            console.log('PopState event:', {
+                event,
+                state: event.state,
+                currentUrl: window.location.href
+            });
+            
+            const urlParams = new URLSearchParams(window.location.search);
+            const tag = urlParams.get('tag');
+            console.log('Tag from URL during popstate:', tag);
+            
+            if (tag && frequencyData[tag] !== undefined) {
+                // Update history index
+                const index = tagHistory.indexOf(tag);
+                if (index !== -1) {
+                    currentHistoryIndex = index;
+                }
+                loadGraphForTag(tag, false);
+            }
+        }
+
+        // Add tag to history
+        function addToHistory(tag) {
+            console.log('Adding to history:', {
+                tag,
+                currentHistoryIndex,
+                tagHistoryLength: tagHistory.length,
+                currentUrl: window.location.href
+            });
+
+            // Remove any future history entries if we're not at the end
+            if (currentHistoryIndex < tagHistory.length - 1) {
+                tagHistory = tagHistory.slice(0, currentHistoryIndex + 1);
+            }
+
+            // Add new tag to history
+            tagHistory.push(tag);
+            currentHistoryIndex = tagHistory.length - 1;
+
+            // Update URL without triggering a page reload
+            const url = new URL(window.location);
+            url.searchParams.set('tag', tag);
+            window.history.pushState({ tag }, '', url);
+
+            console.log('After adding to history:', {
+                tagHistory,
+                currentHistoryIndex,
+                newUrl: window.location.href
+            });
+        }
+
+        // Filter tag bubbles based on search input
+        function filterTagBubbles(searchText) {
+            const bubbleContainer = document.getElementById('tag-bubbles');
+            const bubbles = bubbleContainer.getElementsByClassName('tag-bubble');
+            
+            Array.from(bubbles).forEach(bubble => {
+                const tagName = bubble.textContent.split(' ')[0]; // Get tag name without count
+                if (tagName.toLowerCase().includes(searchText.toLowerCase())) {
+                    bubble.style.display = 'inline-flex';
+                } else {
+                    bubble.style.display = 'none';
+                }
+            });
+        }
 
         // Create tag bubbles based on frequency data
         function createTagBubbles() {
@@ -695,7 +819,7 @@
                 // Add click event to update graph
                 bubble.addEventListener('click', () => {
                     document.getElementById('search-input').value = tag;
-                    loadGraphForTag(tag);
+                    loadGraphForTag(tag, true); // Add to history when clicking a bubble
                 });
 
                 bubbleContainer.appendChild(bubble);
@@ -727,7 +851,13 @@
         }
 
         // Load graph for specific tag
-        function loadGraphForTag(tag) {
+        function loadGraphForTag(tag, shouldAddToHistory = true) {
+            console.log('Loading graph for tag:', {
+                tag,
+                shouldAddToHistory,
+                currentUrl: window.location.href
+            });
+
             // Show loading indicator
             document.getElementById('loading-indicator').style.display = 'block';
 
@@ -739,6 +869,11 @@
 
             // Update search input to match current tag
             document.getElementById('search-input').value = tag;
+
+            // Add to history if requested
+            if (shouldAddToHistory) {
+                addToHistory(tag);
+            }
 
             // Initialize or reset graph
             initializeGraph();
@@ -959,7 +1094,8 @@
             .on('click', function(event, d) {
                 if (d.type === 'tag') {
                     document.getElementById('search-input').value = d.name;
-                    loadGraphForTag(d.name);
+                    loadGraphForTag(d.name, true); // Add to history when clicking a tag
+                    filterTagBubbles(d.name);
                 } else {
                     // Show file details in info panel
                     showFileInfo(d);
@@ -1036,16 +1172,24 @@
         // Add event listeners
         document.getElementById('search-button').addEventListener('click', function() {
             const tag = document.getElementById('search-input').value.trim();
-            if (tag) {
-                loadGraphForTag(tag);
+            if (tag && frequencyData[tag] !== undefined) {
+                loadGraphForTag(tag, true); // Add to history when searching
+            } else if (tag) {
+                alert('Tag not found in the data!');
             }
         });
 
         document.getElementById('search-input').addEventListener('keyup', function(event) {
+            const searchText = this.value.trim();
+            
+            // Filter tag bubbles as user types
+            filterTagBubbles(searchText);
+            
             if (event.key === 'Enter') {
-                const tag = document.getElementById('search-input').value.trim();
-                if (tag) {
-                    loadGraphForTag(tag);
+                if (searchText && frequencyData[searchText] !== undefined) {
+                    loadGraphForTag(searchText, true); // Add to history when pressing Enter
+                } else if (searchText) {
+                    alert('Tag not found in the data!');
                 }
             }
         });

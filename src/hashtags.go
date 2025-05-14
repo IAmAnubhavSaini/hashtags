@@ -195,7 +195,7 @@ func main() {
 
 	writeJSON(sortMapByValue(globalFreq), "./dist/frequency.json")
 	writeJSON(convertTagToFiles(tagToFiles), "./dist/tags-files.json")
-	writeJSON(filesToTags, "./dist/files.tags.json")
+	writeJSON(filesToTags, "./dist/files-tags.json")
 }
 
 type FileData struct {
