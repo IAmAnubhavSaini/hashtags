@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -9,6 +11,33 @@ import (
 	"sort"
 	"strings"
 )
+
+// Load environment variables from .env file
+func loadEnvFile() map[string]string {
+	env := make(map[string]string)
+	data, err := os.ReadFile(".env")
+	if err != nil {
+		return env
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		// Remove quotes if present
+		value = strings.Trim(value, "\"'")
+		env[key] = value
+	}
+	return env
+}
 
 var hashtagRE = regexp.MustCompile(`#([a-zA-Z][\w\-/]{1,60})`)
 
@@ -87,15 +116,44 @@ func stripCodeAndStrings(src string) string {
 }
 
 func main() {
-	home, _ := os.UserHomeDir()
-	// Change this to your notes directory
-	root := filepath.Join(home, "notes")
+	// Define command line flags
+	pathFlag := flag.String("path", "", "Full path to notes directory")
+	flag.Parse()
+
+	// Determine notes directory path from various sources
+	var notesPath string
+
+	// 1. Check command line argument
+	if *pathFlag != "" {
+		notesPath = *pathFlag
+	} else {
+		// 2. Check environment variables from .env file
+		env := loadEnvFile()
+		if envPath, ok := env["NOTES_PATH"]; ok && envPath != "" {
+			notesPath = envPath
+		} else {
+			// 3. Fallback to default path
+			home, _ := os.UserHomeDir()
+			notesPath = filepath.Join(home, "notes")
+			
+			// Error out if not provided explicitly and default doesn't exist
+			if _, err := os.Stat(notesPath); os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Error: Notes path not found\n")
+				fmt.Fprintf(os.Stderr, "Please specify path using one of these methods:\n")
+				fmt.Fprintf(os.Stderr, "1. Command line: -path=/path/to/notes\n")
+				fmt.Fprintf(os.Stderr, "2. Environment: Create .env file with NOTES_PATH=/path/to/notes\n")
+				os.Exit(1)
+			}
+		}
+	}
+
+	fmt.Printf("Processing notes from: %s\n", notesPath)
 
 	globalFreq := map[string]int{}
 	tagToFiles := map[string]map[string]struct{}{}
 	var filesToTags []FileData
 
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(notesPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || strings.ToLower(filepath.Ext(path)) != ".md" {
 			return nil
 		}
